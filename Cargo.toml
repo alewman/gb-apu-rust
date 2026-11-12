@@ -1,0 +1,22 @@
+[package]
+name = "gb-apu-rust"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "The Game Boy APU transcribed from, and proven equivalent to, gb-apu-python"
+license = "MIT"
+repository = "https://github.com/alewman/gb-apu-rust"
+publish = false
+
+[lib]
+name = "gb_apu"
+
+# The core imports nothing. The ladder's tools (examples/) and the board-stream test read
+# gzip JSON and hash samples.
+[dev-dependencies]
+flate2 = "1"
+serde_json = "1"
+sha2 = "0.10"
+
+[profile.release]
+debug = 1
