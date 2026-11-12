@@ -8,7 +8,7 @@ PIN=b8cab61eb5392f0024dc3acc565c802e3b168258
 SRC=${1:-}
 if [ -z "$SRC" ]; then
     if [ -d "$ROOT/../gb-apu-python/.git" ]; then SRC="$ROOT/../gb-apu-python"
-    else SRC=git@github.com:alewman/gb-apu-python.git; fi
+    else SRC=https://github.com/alewman/gb-apu-python; fi
 fi
 DEST="$ROOT/external/gb-apu-python"
 mkdir -p "$ROOT/external"

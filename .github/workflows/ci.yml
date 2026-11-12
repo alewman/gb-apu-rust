@@ -2,8 +2,7 @@ name: CI
 
 # Kept small: main and pull requests only, and a newer run on the same ref cancels the older
 # one. `cargo test` is rungs 1 and 3 (the seam tests and the 94 board streams, committed). Rungs
-# 2 and 4 need the reference, gb-apu-python, which is private, so they run locally
-# (docs/status.md).
+# 2 and 4 need the reference, gb-apu-python, and run locally (docs/status.md).
 on:
   push:
     branches: [main]

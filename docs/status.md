@@ -1,9 +1,10 @@
 # Status
 
-2026-11-12. **The ladder passes: all four rungs.** A board may adopt this crate.
+2026-11-12. **The ladder passes: all four rungs.** gameboy-rust uses this crate.
 
 Reference: gb-apu-python `b8cab61eb5392f0024dc3acc565c802e3b168258` (DMG, CGB and AGB rows,
-odd-T hold in `run()`). Linux x86_64, rustc 1.93.1, the reference on PyPy 7.3.20.
+odd-T hold in `run()`). The ladder was run at `0c2c240` on Linux x86_64, rustc 1.93.1, the
+reference on PyPy 7.3.20.
 
 | Rung | What | Result | Command |
 | --- | --- | --- | --- |
@@ -17,11 +18,15 @@ odd-T hold in `run()`). Linux x86_64, rustc 1.93.1, the reference on PyPy 7.3.20
 `scripts/fetch_gbapupython.sh` clones it at the pin into `external/` (PyPy is used when found;
 `PYTHON=` overrides, `JOBS=` sets the parallelism, default 8).
 
-## The brief's claim about f0a7f48
+Re-checked at `0c2c240` (2026-11-12, docs-only changes since): `cargo test --release` 20 + 1
+pass, `cargo fmt --check` and `cargo clippy --release --all-targets -- -D warnings` (clippy
+0.1.99) clean, `scripts/rung2.sh 24` 72 of 72 identical.
 
-gameboy-python pins gb-apu-python `f0a7f48`; this crate transcribes `b8cab61`. The brief says the
-two differ only by the AGB row and the odd-T hold, which a board ticking even T never reaches.
-Checked against `git diff f0a7f48 b8cab61 -- src`: **true**. The other changes are
+## gb-apu-python f0a7f48 and b8cab61
+
+gameboy-python pins gb-apu-python `f0a7f48`; this crate transcribes `b8cab61`. The two differ
+only by the AGB row and the odd-T hold, which a board ticking even T never reaches. Checked
+against `git diff f0a7f48 b8cab61 -- src`: **true**. The other changes are
 refactors with the same results on the DMG and CGB rows: `READ_MASKS` is chosen per row (the DMG
 and CGB keep the same table), and `wave_output()` became `(buffer * quarters) >> 2` with quarters
 (0, 4, 2, 1), which equals the old `0` / `buffer >> 0, 1, 2` for every digit. A board that calls
@@ -82,12 +87,15 @@ let s: APUState = apu.capture_state(); // model, t, power, registers, wave_ram, 
 Python properties are methods here (`channel_on()`, `nr50()`, `nr51()`); `frame_clock_high`,
 `capture`, `sample_rate`, `t` and the channels (`ch1`-`ch4`, with their Python field names) are
 public fields, as they are public attributes in Python. Everything else on `APU` is internal, as
-in the reference. Restoring state is not offered (nor in Python).
+in the reference.
+
+**Restoring state is not offered** (nor in Python): `capture_state()` is a comparison snapshot,
+and `APU` is neither `Clone` nor serde. A host's save states cannot carry the APU until this
+crate offers a restore; gameboy-rust's save states leave the APU out for this reason.
 
 ## Open
 
+- State restore (above): the one gap a board notices.
 - Speed is not measured; correct, not fast (a `-fast` fork is the place).
-- Local `cargo clippy` is too old for this toolchain; the library, `tests/apu.rs` and the example
-  were linted with the local nightly `clippy-driver` directly, CI runs the real thing.
-- The wasm32 build is untried here (the target is not installed locally); the library is plain
+- The wasm32 build is untried (the target is not installed locally); the library is plain
   `std` with no dependencies.
