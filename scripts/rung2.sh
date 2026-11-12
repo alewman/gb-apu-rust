@@ -19,7 +19,8 @@ if [ "${REUSE:-0}" != 1 ] || [ ! -f "$DIR/ref.done" ]; then
     ls "$DIR"/scripts/*.txt | nice xargs -P "$JOBS" -n 8 env PYTHONPATH="$REF/src" "$PYTHON" "$ROOT/scripts/lockstep_ref.py" --out-dir "$DIR/ref"
     touch "$DIR/ref.done"
 fi
-OURS=$(mktemp -d "$DIR/ours.XXXX")
+OURS=${OURS:-"$DIR/ours"}  # this core's traces (seeded_faults.py points it into its copy)
+mkdir -p "$OURS"
 ls "$DIR"/scripts/*.txt | nice xargs -P "$JOBS" -n 16 "$BIN" --out-dir "$OURS"
 status=0; same=0; total=0; lines=0
 for ref in "$DIR"/ref/*.trace; do
@@ -29,7 +30,7 @@ for ref in "$DIR"/ref/*.trace; do
         same=$((same + 1)); lines=$((lines + $(wc -l < "$ref")))
     else
         status=1
-        first=$(diff <(cut -c1-160 "$ref") <(cut -c1-160 "$OURS/$name") | head -4 | tr '\n' ' ')
+        first=$(diff <(cut -c1-160 "$ref") <(cut -c1-160 "$OURS/$name") | head -4 | tr '\n' ' ' || true)
         echo "DIFFERENT ${name%.trace}: $first"
     fi
 done
