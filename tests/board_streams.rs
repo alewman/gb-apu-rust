@@ -92,7 +92,7 @@ fn replay(stream: &Value) -> Option<String> {
         .iter()
         .flat_map(|s| s.to_le_bytes())
         .collect();
-    let samples = format!("{:x}", Sha256::digest(&bytes));
+    let samples = format!("{:x}", Sha256::digest(bytes));
     if samples != header["samples_sha256"].as_str().unwrap() {
         return Some("the samples differ".into());
     }

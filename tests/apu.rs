@@ -53,7 +53,7 @@ fn cgb_power_off_clears_the_length_counters() {
 #[test]
 fn the_model_rows() {
     assert_eq!(MODELS, [("dmg", DMG), ("cgb", CGB), ("agb", AGB)]);
-    assert!(!DMG.cgb && CGB.cgb);
+    assert_eq!((DMG.cgb, CGB.cgb), (false, true));
     assert_eq!(APU::default().model, DMG);
 }
 
@@ -243,7 +243,10 @@ fn bank(apu: &APU) -> Vec<u8> {
 #[test]
 fn agb_is_a_cgb_family_row_with_wave_banks() {
     assert_eq!(model("agb"), Some(AGB));
-    assert!(AGB.cgb && AGB.wave_banks && !CGB.wave_banks && !DMG.wave_banks);
+    assert_eq!(
+        (AGB.cgb, AGB.wave_banks, CGB.wave_banks, DMG.wave_banks),
+        (true, true, false, false)
+    );
 }
 
 #[test]

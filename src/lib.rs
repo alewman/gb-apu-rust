@@ -460,6 +460,7 @@ impl Default for Noise {
 
 /// An immutable snapshot, for comparison and reporting (restoring is not offered).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
 pub struct APUState {
     pub model: &'static str,
     /// T-cycles since construction
@@ -478,6 +479,7 @@ pub struct APUState {
     pub digital: [u8; 4],
 }
 
+#[allow(clippy::upper_case_acronyms)]
 pub struct APU {
     pub model: Model,
     pub cgb: bool,
@@ -667,11 +669,11 @@ impl APU {
     // ----- registers ----------------------------------------------------------------------
 
     pub fn read(&self, address: u16) -> u8 {
-        if address >= 0xFF30 {
+        if (0xFF30..0xFF40).contains(&address) {
             return self.read_wave((address - 0xFF30) as usize);
         }
-        if address >= 0xFF27 || address < 0xFF10 {
-            return 0xFF;
+        if !(0xFF10..0xFF27).contains(&address) {
+            return 0xFF; // $FF27-$FF2F; and outside the contract (see the module header)
         }
         if address == 0xFF26 {
             let status: u8 = self
@@ -687,11 +689,11 @@ impl APU {
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
-        if address >= 0xFF30 {
+        if (0xFF30..0xFF40).contains(&address) {
             self.write_wave((address - 0xFF30) as usize, value);
             return;
         }
-        if address >= 0xFF27 || address < 0xFF10 {
+        if !(0xFF10..0xFF27).contains(&address) {
             return;
         }
         if address == 0xFF26 {
