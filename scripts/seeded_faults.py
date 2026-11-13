@@ -80,10 +80,12 @@ def judge(name: str, old: str, new: str, targets: queue.Queue) -> tuple[str, lis
     copy.mkdir(parents=True, exist_ok=True)
     for item in ("Cargo.toml", "Cargo.lock", "src", "tests", "examples"):
         source = ROOT / item
+        # shutil.copy, not copy2: fresh timestamps, so cargo rebuilds from this copy and never
+        # reuses a build in the shared target that is newer than an older-stamped copied file
         if source.is_dir():
-            shutil.copytree(source, copy / item, dirs_exist_ok=True)
+            shutil.copytree(source, copy / item, dirs_exist_ok=True, copy_function=shutil.copy)
         else:
-            shutil.copy2(source, copy / item)
+            shutil.copy(source, copy / item)
     text = (ROOT / "src" / "lib.rs").read_text()
     if text.count(old) != 1:
         return name, [], f"fault text found {text.count(old)} times"
