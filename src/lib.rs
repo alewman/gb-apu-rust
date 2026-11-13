@@ -29,6 +29,11 @@
 //! - `write` takes a `u8`: Python's `bytearray` raises on anything wider, so no host can pass
 //!   more. Addresses below $FF10 or above $FF3F are outside the contract (Python indexes from the
 //!   end of its array or raises); here they read $FF and writes are ignored.
+//! - `read_masks()` is a method of the model's row rather than a stored reference.
+//!
+//! Save states (not in gb-apu-python, which has none): with the `serde` feature `APU` is
+//! `Serialize`/`Deserialize`, every field included (a `Model` is saved by its name), so a host can
+//! restore an APU exactly where it was. Without the feature the core imports nothing.
 
 /// A hardware revision's APU: `cgb` selects the CGB-family rules (powering off clears the
 /// length counters and keeps them read-only; wave RAM is reachable at any time while CH3 plays
@@ -152,6 +157,7 @@ pub const CLOCK_HZ: i64 = 4194304;
 /// that arms the clock, and the clock's tick on the event after that; the clock locks while the
 /// volume cannot move. The model SameSuite's volume ROMs measure.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Envelope {
     pub volume: i64,
     pub countdown: i64,
@@ -256,6 +262,7 @@ impl Envelope {
 /// model of the CGB: a countdown per sample, a start-up `delay` and a suppressed first
 /// sample).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Pulse {
     pub has_sweep: bool,
     pub enabled: bool,
@@ -336,6 +343,7 @@ impl Pulse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Wave {
     pub enabled: bool,
     pub length_enabled: bool,
@@ -383,6 +391,7 @@ impl Default for Wave {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Noise {
     pub enabled: bool,
     pub length_enabled: bool,
@@ -458,7 +467,8 @@ impl Default for Noise {
     }
 }
 
-/// An immutable snapshot, for comparison and reporting (restoring is not offered).
+/// An immutable snapshot, for comparison and reporting (to restore, serialise the `APU` itself:
+/// the `serde` feature).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::upper_case_acronyms)]
 pub struct APUState {
@@ -480,16 +490,17 @@ pub struct APUState {
 }
 
 #[allow(clippy::upper_case_acronyms)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct APU {
     pub model: Model,
     pub cgb: bool,
     pub wave_banks: bool,
-    read_masks: &'static [u8; 0x17],
     /// $FF10-$FF26 as written
     pub registers: [u8; 0x17],
     pub wave_ram: [u8; 16],
     /// AGB: the shift register, one digit per entry: bank 0 then bank 1, each in play order.
     /// Playing rotates the selected bank (both, in 64-digit mode), so digits move.
+    #[cfg_attr(feature = "serde", serde(with = "bytes64"))]
     pub wave_digits: [u8; 64],
     pub power: bool,
     pub ch1: Pulse,
@@ -535,6 +546,39 @@ pub struct APU {
     pub frame_clock_high: bool,
 }
 
+/// `Model` in a save state: its name, looked up in `MODELS` on load.
+#[cfg(feature = "serde")]
+impl serde::Serialize for Model {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Model {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        model(&name).ok_or_else(|| serde::de::Error::custom(format!("unknown model {name}")))
+    }
+}
+
+/// serde derives arrays up to 32 long; the AGB shift register is 64.
+#[cfg(feature = "serde")]
+mod bytes64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 64], D::Error> {
+        let bytes: Vec<u8> = Vec::deserialize(deserializer)?;
+        bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("wave_digits: 64 bytes"))
+    }
+}
+
 /// C integer division by two (towards zero).
 fn half(value: i64) -> i64 {
     if value >= 0 {
@@ -545,16 +589,20 @@ fn half(value: i64) -> i64 {
 }
 
 impl APU {
+    /// The bits of each register that read as 1 (the AGB's NR30/NR32 differ).
+    fn read_masks(&self) -> &'static [u8; 0x17] {
+        if self.wave_banks {
+            &READ_MASKS_AGB
+        } else {
+            &READ_MASKS
+        }
+    }
+
     pub fn new(sample_rate: u32, model: Model) -> Self {
         APU {
             model,
             cgb: model.cgb,
             wave_banks: model.wave_banks,
-            read_masks: if model.wave_banks {
-                &READ_MASKS_AGB
-            } else {
-                &READ_MASKS
-            },
             registers: [0; 0x17],
             wave_ram: WAVE_POWER_ON,
             wave_digits: [0; 64],
@@ -685,7 +733,7 @@ impl APU {
             return 0x70 | (if self.power { 0x80 } else { 0 }) | status;
         }
         let index = (address - 0xFF10) as usize;
-        self.registers[index] | self.read_masks[index]
+        self.registers[index] | self.read_masks()[index]
     }
 
     pub fn write(&mut self, address: u16, value: u8) {

@@ -12,9 +12,17 @@ publish = false
 [lib]
 name = "gb_apu"
 
-# The core imports nothing. The ladder's tools (examples/) and the board-stream test read
+# The core imports nothing by default. The `serde` feature makes `APU` serialisable (save
+# states for a host). The ladder's tools (examples/) and the board-stream test read
 # gzip JSON and hash samples.
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
 [dev-dependencies]
+bincode = "1"
 flate2 = "1"
 serde_json = "1"
 sha2 = "0.10"

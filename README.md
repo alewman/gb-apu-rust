@@ -28,9 +28,12 @@ apu.capture_state();        // an immutable snapshot
 The contract is the reference's `docs/contract.md`; [docs/status.md](docs/status.md) lists the
 whole Rust API a board uses.
 
-**No state restore.** `capture_state()` is a snapshot for comparison; there is no way to load a
-state back, and `APU` is neither `Clone` nor serde (gb-apu-python has no restore either). A host
-that saves states cannot include the APU yet: gameboy-rust's save states leave it out.
+**Save states: the `serde` feature.** With `features = ["serde"]` the whole `APU` is
+`Serialize`/`Deserialize` (every field; the model row by its name), so a host's save states can
+carry it and restore it exactly; `cargo test --features serde` replays all 94 board streams
+through a save state half way. gb-apu-python has no restore: this is the Rust crate's own.
+Without the feature the core has no dependencies. `capture_state()` stays a comparison
+snapshot.
 
 ## Status
 

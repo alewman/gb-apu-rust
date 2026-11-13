@@ -352,3 +352,28 @@ fn run_loses_no_time_whatever_the_step() {
     assert_eq!(pieces.ch1.index, whole.ch1.index);
     assert_eq!(pieces.ch1.countdown, whole.ch1.countdown);
 }
+
+// ----- save states (the `serde` feature; not in gb-apu-python) ----------------------------------
+
+/// An AGB APU playing 64 digits, saved and restored part way: the copy goes on exactly as the
+/// original (state, reads, samples), including the shift register and the row.
+#[cfg(feature = "serde")]
+#[test]
+fn a_save_state_restores_the_apu_exactly() {
+    let mut apu = agb_wave(0x20, 0x20); // 64 digits, half volume
+    apu.capture = true;
+    apu.run(10_000);
+    let mut copy: APU = bincode::deserialize(&bincode::serialize(&apu).unwrap()).unwrap();
+    assert_eq!(copy.model, AGB);
+    for one in [&mut apu, &mut copy] {
+        one.write(NR32, 0x80);
+        one.run(20_000);
+    }
+    assert_eq!(copy.capture_state(), apu.capture_state());
+    assert_eq!(copy.read(NR30), apu.read(NR30));
+    assert_eq!(copy.take_samples(), apu.take_samples());
+    assert_eq!(
+        bincode::serialize(&copy).unwrap(),
+        bincode::serialize(&apu).unwrap()
+    );
+}

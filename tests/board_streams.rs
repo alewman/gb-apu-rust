@@ -5,6 +5,10 @@
 //! captured 44.1 kHz samples must hash the same: gb-apu-python's `tests/test_board_streams.py`.
 //!
 //! `GB_APU_STREAMS=N` replays only the first N streams (sorted by name), as in Python.
+//!
+//! With the `serde` feature each stream is also replayed through a save state: half way through
+//! its events the APU is serialised (bincode), dropped, and a new one deserialised from the bytes
+//! goes on; everything must still come out as the board saw it.
 
 use std::fs;
 use std::io::Read;
@@ -37,14 +41,18 @@ fn load(path: &Path) -> Value {
     serde_json::from_str(&text).unwrap()
 }
 
-/// Run a stream; the first mismatch, or None.
-fn replay(stream: &Value) -> Option<String> {
+/// Run a stream (with `restore_at`, through a save state before that event); the first
+/// mismatch, or None.
+fn replay(stream: &Value, restore_at: Option<usize>) -> Option<String> {
     let header = &stream["header"];
     let mut apu = APU::new(44100, model(header["model"].as_str().unwrap()).unwrap());
     apu.skip_boot();
     apu.capture = true;
     let n = |v: &Value| v.as_u64().unwrap();
     for (i, event) in stream["events"].as_array().unwrap().iter().enumerate() {
+        if Some(i) == restore_at {
+            apu = round_trip(&apu);
+        }
         let event = event.as_array().unwrap();
         match event[0].as_str().unwrap() {
             "t" => {
@@ -99,8 +107,28 @@ fn replay(stream: &Value) -> Option<String> {
     None
 }
 
+#[cfg(feature = "serde")]
+fn round_trip(apu: &APU) -> APU {
+    bincode::deserialize(&bincode::serialize(apu).unwrap()).unwrap()
+}
+
+#[cfg(not(feature = "serde"))]
+fn round_trip(_apu: &APU) -> APU {
+    unreachable!("save states need the serde feature")
+}
+
 #[test]
 fn every_board_stream() {
+    check(false);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn every_board_stream_through_a_save_state() {
+    check(true);
+}
+
+fn check(save_state: bool) {
     let paths = streams();
     assert!(!paths.is_empty(), "no streams");
     let mut failed = Vec::new();
@@ -110,7 +138,9 @@ fn every_board_stream() {
             .unwrap()
             .to_string_lossy()
             .replace(".json.gz", "");
-        match replay(&load(path)) {
+        let stream = load(path);
+        let half = stream["events"].as_array().unwrap().len() / 2;
+        match replay(&stream, save_state.then_some(half)) {
             None => println!("ok   {name}"),
             Some(why) => {
                 println!("FAIL {name}: {why}");

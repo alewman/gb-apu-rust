@@ -89,13 +89,17 @@ Python properties are methods here (`channel_on()`, `nr50()`, `nr51()`); `frame_
 public fields, as they are public attributes in Python. Everything else on `APU` is internal, as
 in the reference.
 
-**Restoring state is not offered** (nor in Python): `capture_state()` is a comparison snapshot,
-and `APU` is neither `Clone` nor serde. A host's save states cannot carry the APU until this
-crate offers a restore; gameboy-rust's save states leave the APU out for this reason.
+**Save states** (the `serde` feature; gb-apu-python has none): `APU` derives
+`Serialize`/`Deserialize` over every field, internal ones included, with `Model` saved by its
+name and the AGB's 64-entry shift register as bytes; `read_masks` became a method so nothing
+`'static` is stored. `tests/board_streams.rs` replays all 94 streams a second time through a
+bincode round trip half way (94 of 94 identical; leaving the noise LFSR out of the state fails
+3 of them), and `tests/apu.rs` restores an AGB playing 64 digits. `capture_state()` remains a
+comparison snapshot. Provisional (2026-11-13): the format is serde's, so a field change changes
+it; a host should version its own states.
 
 ## Open
 
-- State restore (above): the one gap a board notices.
 - Speed is not measured; correct, not fast (a `-fast` fork is the place).
 - The wasm32 build is untried (the target is not installed locally); the library is plain
   `std` with no dependencies.
