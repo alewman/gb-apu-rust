@@ -4,7 +4,8 @@
 # Usage: scripts/fetch_gbapupython.sh [source repo, default ../gb-apu-python or the GitHub remote]
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PIN=b8cab61eb5392f0024dc3acc565c802e3b168258
+# e5aeb5f = b8cab61 after gb-apu-python's history rewrite of 2026-11-21 (same tree).
+PIN=e5aeb5ff82d23c93ebe464acc3eb474c2c884201
 SRC=${1:-}
 if [ -z "$SRC" ]; then
     if [ -d "$ROOT/../gb-apu-python/.git" ]; then SRC="$ROOT/../gb-apu-python"
