@@ -41,10 +41,10 @@ All four rungs pass. Results and exact commands: [docs/status.md](docs/status.md
 
 | Rung | What | Result |
 | --- | --- | --- |
-| 1 | gb-apu-python's seam tests, transcribed | 20 of 20 |
+| 1 | gb-apu-python's seam tests, transcribed | 21 of 21 (2026-11-25) |
 | 2 | Register-stream lockstep, 192 seeded scripts over the three rows, every read, output and sample | 192 of 192 identical |
 | 3 | The 94 board streams recorded from gameboy-python | 94 of 94 identical |
-| 4 | gb-apu-python's 30 seeded faults, broken the same way here | 30 of 30 caught |
+| 4 | gb-apu-python's seeded faults, broken the same way here | 30 of 30 caught (2026-11-12); after the AGB row's clean-room rewrite (2026-11-25) its ten new faults and the wave-period one: 11 of 11 |
 
 ```text
 cargo test --release           # rungs 1 and 3; needs nothing else (CI runs it with fmt and clippy)

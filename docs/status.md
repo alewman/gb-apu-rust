@@ -22,6 +22,18 @@ Re-checked at `0c2c240` (2026-11-12, docs-only changes since): `cargo test --rel
 pass, `cargo fmt --check` and `cargo clippy --release --all-targets -- -D warnings` (clippy
 0.1.99) clean, `scripts/rung2.sh 24` 72 of 72 identical.
 
+## The AGB row's clean-room rewrite (2026-11-25, branch `cleanroom-agb-wave`)
+
+Reference repinned to gb-apu-python `a98fb94` (local branch `cleanroom-agb-wave`: b8cab61's tree
+plus `agb.py`); `src/agb.rs` transcribes it (docs/provenance.md). Run on Linux x86_64, rustc
+1.93.1, the reference on PyPy, `JOBS=2`: rung 1 21 of 21; rung 2 192 of 192 identical (401,476
+reads, 10,840,728 sample values) and seed 2 96 of 96 (483,931 reads, 12,466,164 samples); rung 3
+94 of 94; `cargo test --release --features serde` 22 + 2 pass; `cargo fmt --check` and `cargo
+clippy --release --all-targets [--features serde] -- -D warnings` clean. Rung 4 was run for the
+eleven faults the rewrite touches (`scripts/seeded_faults.py --jobs 1 AGB "wave period"`): 11 of
+11 caught (the ten AGB ones by rungs 1 and 2, 128 of 192 scripts identical, i.e. every AGB script
+differs); the other twenty were not rerun.
+
 ## gb-apu-python f0a7f48 and b8cab61
 
 gameboy-python pins gb-apu-python `f0a7f48`; this crate transcribes `b8cab61`. The two differ
@@ -91,7 +103,8 @@ in the reference.
 
 **Save states** (the `serde` feature; gb-apu-python has none): `APU` derives
 `Serialize`/`Deserialize` over every field, internal ones included, with `Model` saved by its
-name and the AGB's 64-entry shift register as bytes; `read_masks` became a method so nothing
+name and the AGB's wave banks (`agb::WaveBanks`, since the 2026-11-25 clean-room rewrite) as
+they are; `read_masks` became a method so nothing
 `'static` is stored. `tests/board_streams.rs` replays all 94 streams a second time through a
 bincode round trip half way (94 of 94 identical; leaving the noise LFSR out of the state fails
 3 of them), and `tests/apu.rs` restores an AGB playing 64 digits. `capture_state()` remains a

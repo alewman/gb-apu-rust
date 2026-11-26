@@ -43,7 +43,8 @@
 //! Docs `Audio_details.md`, blargg `dmg_sound`/`cgb_sound` and SameSuite's APU ROMs (SameBoy's
 //! model of the CGB); where a constant is fitted to a test it says so.
 //!
-//! A transcription of gb-apu-python (`src/gb_apu_python/__init__.py` at b8cab61): same names,
+//! A transcription of gb-apu-python (`src/gb_apu_python/__init__.py` at b8cab61, the AGB row at
+//! a98fb94): same names,
 //! same order, same comments. Where Rust forced a difference it is said here:
 //!
 //! - Python's integers are unbounded; the channels' counters here are `i64`, which none of them
@@ -54,10 +55,15 @@
 //!   more. Addresses below $FF10 or above $FF3F are outside the contract (Python indexes from the
 //!   end of its array or raises); here they read $FF and writes are ignored.
 //! - `read_masks()` is a method of the model's row rather than a stored reference.
+//! - The AGB row's wave RAM banks are `agb.rs`, transcribed from gb-apu-python's `agb.py` (its
+//!   clean-room rewrite from GBATEK, 2026-11-25); the APU holds them as `Option<WaveBanks>`.
 //!
 //! Save states (not in gb-apu-python, which has none): with the `serde` feature `APU` is
 //! `Serialize`/`Deserialize`, every field included (a `Model` is saved by its name), so a host can
 //! restore an APU exactly where it was. Without the feature the core imports nothing.
+
+pub mod agb;
+use agb::{agb_wave_quarters, WaveBanks};
 
 /// A hardware revision's APU: `cgb` selects the CGB-family rules (powering off clears the
 /// length counters and keeps them read-only; wave RAM is reachable at any time while CH3 plays
@@ -67,9 +73,7 @@
 pub struct Model {
     pub name: &'static str,
     pub cgb: bool,
-    /// AGB: wave RAM is two banks of 32 digits held in a shift register (NR30 bit 6 picks the
-    /// bank that plays, bit 5 chains both into 64 digits; the CPU reaches the bank that is not
-    /// selected), and NR32 bit 7 forces the wave volume to 75 % (GBATEK "GBA Sound Channel 3")
+    /// AGB: channel 3 has two wave RAM banks and NR32's force bit (agb.rs, from GBATEK)
     pub wave_banks: bool,
 }
 
@@ -86,7 +90,8 @@ pub const CGB: Model = Model {
     wave_banks: false,
 };
 /// The Game Boy Advance's Game Boy channels, in GBA mode (gba-python): the CGB-family rules plus
-/// the wave channel's two banks. The host clocks the frame sequencer from its own system clock.
+/// GBATEK's channel 3 changes (agb.rs: two wave RAM banks, the forced 75 % volume, the NR30 and
+/// NR32 read masks)
 pub const AGB: Model = Model {
     name: "agb",
     cgb: true,
@@ -135,15 +140,9 @@ pub const READ_MASKS: [u8; 0x17] = [
     0x00, 0x00, 0x70,  // NR50, NR51, NR52
 ];
 
-/// AGB: NR30's bank bits (6-5) and NR32's force bit (7) read back too
-pub const READ_MASKS_AGB: [u8; 0x17] = {
-    let mut masks = READ_MASKS;
-    masks[0x0A] = 0x1F;
-    masks[0x0B] = 0xFF;
-    masks[0x0C] = 0x1F;
-    masks
-};
-/// the wave channel's volume in quarters by NR32 bits 6-5; the AGB's force bit gives 3
+/// AGB: the NR30 and NR32 bits GBATEK marks readable (`agb::agb_read_masks`)
+pub const READ_MASKS_AGB: [u8; 0x17] = agb::agb_read_masks(READ_MASKS);
+/// the wave channel's volume in quarters by NR32 bits 6-5 (the AGB's force bit: agb.rs)
 pub const WAVE_QUARTERS: [i64; 4] = [0, 4, 2, 1];
 
 /// NRx4 address -> channel index (the trigger bit is bit 7)
@@ -502,7 +501,7 @@ pub struct APUState {
     pub power: bool,
     /// $FF10-$FF26 as written
     pub registers: [u8; 0x17],
-    /// AGB: both banks (32 bytes) as the shift register holds them now
+    /// $FF30-$FF3F; AGB: both banks, bank 0 then bank 1 (32 bytes), as now
     pub wave_ram: Vec<u8>,
     /// frame sequencer steps counted (mod 256)
     pub divider: i64,
@@ -522,10 +521,8 @@ pub struct APU {
     /// $FF10-$FF26 as written
     pub registers: [u8; 0x17],
     pub wave_ram: [u8; 16],
-    /// AGB: the shift register, one digit per entry: bank 0 then bank 1, each in play order.
-    /// Playing rotates the selected bank (both, in 64-digit mode), so digits move.
-    #[cfg_attr(feature = "serde", serde(with = "bytes64"))]
-    pub wave_digits: [u8; 64],
+    /// AGB: the two wave RAM banks (`agb::WaveBanks`); None on the Game Boy rows
+    pub agb_wave: Option<WaveBanks>,
     pub power: bool,
     pub ch1: Pulse,
     pub ch2: Pulse,
@@ -586,23 +583,6 @@ impl<'de> serde::Deserialize<'de> for Model {
     }
 }
 
-/// serde derives arrays up to 32 long; the AGB shift register is 64.
-#[cfg(feature = "serde")]
-mod bytes64 {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(value: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(value)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 64], D::Error> {
-        let bytes: Vec<u8> = Vec::deserialize(deserializer)?;
-        bytes
-            .try_into()
-            .map_err(|_| serde::de::Error::custom("wave_digits: 64 bytes"))
-    }
-}
-
 /// C integer division by two (towards zero).
 fn half(value: i64) -> i64 {
     if value >= 0 {
@@ -629,7 +609,11 @@ impl APU {
             wave_banks: model.wave_banks,
             registers: [0; 0x17],
             wave_ram: WAVE_POWER_ON,
-            wave_digits: [0; 64],
+            agb_wave: if model.wave_banks {
+                Some(WaveBanks::new())
+            } else {
+                None
+            },
             power: false,
             ch1: Pulse::new(true),
             ch2: Pulse::new(false),
@@ -944,6 +928,9 @@ impl APU {
             channel.enabled = dac;
             channel.timer = (2048 - channel.frequency) * 2 + WAVE_TRIGGER_DELAY;
             channel.index = 0;
+            if let Some(banks) = self.agb_wave.as_mut() {
+                banks.trigger(); // AGB: back to the selected bank (agb.rs)
+            }
         } else {
             let nr43 = self.registers[0x12];
             let nr42 = self.registers[0x11];
@@ -1411,20 +1398,10 @@ impl APU {
         self.t - self.ch3.last_read < WAVE_WINDOW
     }
 
-    /// AGB: where the bank the CPU reaches starts in the shift register: the one NR30 bit 6
-    /// does not select, playing or not (GBATEK; with the APU off NR30 is 0, so bank 1).
-    fn other_bank(&self) -> usize {
-        if self.registers[0x0A] & 0x40 != 0 {
-            0
-        } else {
-            32
-        }
-    }
-
     fn read_wave(&self, offset: usize) -> u8 {
-        if self.wave_banks {
-            let at = self.other_bank() + 2 * offset;
-            return (self.wave_digits[at] << 4) | self.wave_digits[at + 1];
+        if let Some(banks) = &self.agb_wave {
+            // AGB: the bank NR30 does not select (agb.rs)
+            return banks.read(self.registers[0x0A], offset);
         }
         let ch3 = &self.ch3;
         if !(ch3.enabled && self.power) {
@@ -1437,10 +1414,9 @@ impl APU {
     }
 
     fn write_wave(&mut self, offset: usize, value: u8) {
-        if self.wave_banks {
-            let at = self.other_bank() + 2 * offset;
-            self.wave_digits[at] = value >> 4;
-            self.wave_digits[at + 1] = value & 0xF;
+        if let Some(banks) = self.agb_wave.as_mut() {
+            // AGB: the bank NR30 does not select (agb.rs)
+            banks.write(self.registers[0x0A], offset, value);
             return;
         }
         if !(self.ch3.enabled && self.power) {
@@ -1581,18 +1557,16 @@ impl APU {
             return;
         }
         self.ch3.timer -= t;
-        if self.wave_banks {
-            let period = (2048 - self.ch3.frequency) * 2;
-            while self.ch3.timer <= 0 {
-                self.ch3.timer += period;
-                self.shift_wave();
-            }
-            return;
-        }
+        let mut banks = self.agb_wave.as_mut();
         let ch3 = &mut self.ch3;
         while ch3.timer <= 0 {
             let at = base + t + ch3.timer; // when inside this tick the period ran out
             ch3.timer += (2048 - ch3.frequency) * 2;
+            if let Some(banks) = banks.as_mut() {
+                // AGB: each period shifts the playing bank (agb.rs)
+                ch3.buffer = banks.shift(self.registers[0x0A]);
+                continue;
+            }
             ch3.index = (ch3.index + 1) & 31;
             let byte = self.wave_ram[(ch3.index >> 1) as usize] as i64;
             ch3.buffer = if ch3.index & 1 == 0 {
@@ -1602,27 +1576,6 @@ impl APU {
             };
             ch3.last_read = at;
         }
-    }
-
-    /// AGB: the shift register moves one digit and the digit that leaves its end is played
-    /// (and re-enters at the other end). One bank is a ring of 32; in 64-digit mode both are
-    /// one ring that starts with the selected bank (GBATEK).
-    fn shift_wave(&mut self) {
-        let digits = &mut self.wave_digits;
-        let nr30 = self.registers[0x0A];
-        let start = if nr30 & 0x40 != 0 { 32 } else { 0 };
-        let out = digits[start];
-        if nr30 & 0x20 != 0 {
-            let other = start ^ 32;
-            digits.copy_within(start + 1..start + 32, start);
-            digits[start + 31] = digits[other];
-            digits.copy_within(other + 1..other + 32, other);
-            digits[other + 31] = out;
-        } else {
-            digits.copy_within(start + 1..start + 32, start);
-            digits[start + 31] = out;
-        }
-        self.ch3.buffer = out as i64;
     }
 
     fn tick_noise(&mut self, t: i64) {
@@ -1653,14 +1606,15 @@ impl APU {
         (self.ch3.buffer * self.wave_quarters()) >> 2
     }
 
-    /// The wave channel's volume in quarters (NR32): 0, 4 (100 %), 2 or 1; on the AGB bit 7
-    /// forces 3 (75 %).
+    /// The wave channel's volume in quarters (NR32 bits 6-5): 0, 4 (100 %), 2 or 1; on the
+    /// AGB, NR32 bit 7 forces 3 (`agb::agb_wave_quarters`, GBATEK).
     pub fn wave_quarters(&self) -> i64 {
         let nr32 = self.registers[0x0C];
-        if self.wave_banks && nr32 & 0x80 != 0 {
-            return 3;
+        let quarters = WAVE_QUARTERS[((nr32 >> 5) & 3) as usize];
+        if self.agb_wave.is_some() {
+            return agb_wave_quarters(nr32, quarters);
         }
-        WAVE_QUARTERS[((nr32 >> 5) & 3) as usize]
+        quarters
     }
 
     /// The wave channel's current digit (0-15) before its volume; 0 while it is off. With
@@ -1755,14 +1709,10 @@ impl APU {
     }
 
     fn wave_bytes(&self) -> Vec<u8> {
-        if !self.wave_banks {
-            return self.wave_ram.to_vec();
+        if let Some(banks) = &self.agb_wave {
+            return banks.snapshot();
         }
-        let digits = &self.wave_digits;
-        (0..64)
-            .step_by(2)
-            .map(|i| (digits[i] << 4) | digits[i + 1])
-            .collect()
+        self.wave_ram.to_vec()
     }
 
     /// Analogue left and right, -1..1 before the volume: DAC maps digital 0 to +1 and 15 to

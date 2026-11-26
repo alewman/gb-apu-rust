@@ -1,5 +1,5 @@
 //! The APU on its own: the host seams (clock, sequencer, registers, outputs, state) and the model
-//! rows. gb-apu-python's `tests/test_apu.py` at b8cab61, test for test. The behaviour against
+//! rows. gb-apu-python's `tests/test_apu.py` at b8cab61 (the AGB tests at a98fb94), test for test. The behaviour against
 //! hardware is judged through the board's streams (board_streams.rs).
 
 use gb_apu::*;
@@ -284,12 +284,32 @@ fn agb_64_digit_mode_starts_with_the_selected_bank_then_the_other() {
 }
 
 #[test]
+fn agb_a_restart_plays_the_selected_bank_again() {
+    // GBATEK "GBA Sound Channel 3": "output will start by replaying the currently selected
+    // bank"; no pointer is reset, so bank 1 keeps the turn it had (HYPOTHESIS, agb.rs
+    // WaveBanks::trigger)
+    let mut apu = agb_wave(0xA0, 0x20);
+    apu.tick(8 + 2 * 39); // 40 digits: all of bank 0, then 8 of bank 1
+    apu.write(NR34, 0x87);
+    let want = [&BANK_A[..], &BANK_B[4..], &BANK_B[..4]].concat();
+    assert_eq!(played(&mut apu, 64), digits_of(&want));
+}
+
+#[test]
 fn agb_wave_ram_is_a_shift_register_the_cpu_sees_move() {
+    // GBATEK "GBA Sound Channel 3": "the entire 128 bits are shifted", one bank's worth: each
+    // bank is its own ring and only the playing one moves (HYPOTHESIS for 64-digit mode, agb.rs;
+    // the pre-2026-11-25 row chained both banks into one 256-bit ring, gb-apu-python
+    // docs/provenance.md)
     let mut apu = agb_wave(0xA0, 0x20); // 64 digits from bank 0: the CPU reaches bank 1
-    apu.tick(8 + 2); // two digits played: one byte has left the front and gone to the back
+    apu.tick(8 + 2); // two digits played: one byte has left bank 0's front and gone to its back
+    assert_eq!(bank(&apu), BANK_B); // bank 1 has not moved
+    let want = [&BANK_A[1..], &BANK_A[..1], &BANK_B[..]].concat();
+    assert_eq!(apu.capture_state().wave_ram, want);
+    apu.tick(2 * 32); // 34 digits: bank 0 is home again and bank 1, playing, has turned a byte
     assert_eq!(apu.read(WAVE_RAM), BANK_B[1]);
-    assert_eq!(apu.read(WAVE_RAM + 15), BANK_A[0]);
-    let want = [&BANK_A[1..], &BANK_B[..], &BANK_A[..1]].concat();
+    assert_eq!(apu.read(WAVE_RAM + 15), BANK_B[0]);
+    let want = [&BANK_A[..], &BANK_B[1..], &BANK_B[..1]].concat();
     assert_eq!(apu.capture_state().wave_ram, want);
     let mut apu = agb_wave(0x80, 0x20); // one bank: stopping part way leaves it turned
     apu.tick(8 + 2 * 3); // four digits

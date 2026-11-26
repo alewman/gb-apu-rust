@@ -4,7 +4,7 @@ ladder catches every break.
 
     python3 scripts/seeded_faults.py [--jobs 4] [NAME ...]
 
-The faults are gb-apu-python's 30 (its ``scripts/mutation.py`` at b8cab61), each the same rule
+The faults are gb-apu-python's 31 (its ``scripts/mutation.py`` at b8cab61, the AGB ten at a98fb94), each the same rule
 broken the same way in ``src/lib.rs``. Each is applied to a copy of the repository under
 ``external/faults/<name>/`` (the working tree is never touched) and judged by every rung:
 
@@ -28,7 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: (gb-apu-python's name for it, the exact text in src/lib.rs, its replacement)
+#: (gb-apu-python's name for it, the exact text in src/lib.rs, its replacement[, the file under
+#: src/ when not lib.rs])
 FAULTS = [
     ("duty 75% inverted", "        [0, 1, 1, 1, 1, 1, 1, 0]];", "        [1, 0, 0, 0, 0, 0, 0, 1]];"),
     ("noise divisors from 16", "[8, 16, 32, 48, 64, 80, 96, 112]", "[16, 16, 32, 48, 64, 80, 96, 112]"),
@@ -49,15 +50,18 @@ FAULTS = [
     ("narrower DMG wave corruption", "CORRUPT_HI: i64 = 3;", "CORRUPT_HI: i64 = 2;"),
     ("DAC polarity flipped", "let analog = (7.5 - digital as f64) / 7.5;", "let analog = (digital as f64 - 7.5) / 7.5;"),
     ("panning sides swapped", "            if nr51 & (0x10 << i) != 0 {\n", "            if nr51 & (0x01 << i) != 0 {\n"),
-    ("AGB: the CPU reaches the playing bank", "        if self.registers[0x0A] & 0x40 != 0 {\n            0\n        } else {\n            32\n        }", "        if self.registers[0x0A] & 0x40 != 0 {\n            32\n        } else {\n            0\n        }"),
-    ("AGB: bank 0 always plays", "        let start = if nr30 & 0x40 != 0 { 32 } else { 0 };\n", "        let start = 0;\n"),
-    ("AGB: 64 digits never chain", "        if nr30 & 0x20 != 0 {\n", "        if false {\n"),
-    ("AGB: the 64-digit ring drops a digit", "            digits[other + 31] = out;\n", "            digits[other + 31] = digits[other];\n"),
-    ("AGB: a pointer, not a shift register", "            digits.copy_within(start + 1..start + 32, start);\n            digits[start + 31] = out;\n", "            digits[start + 31] = out;\n"),
-    ("AGB: force bit ignored", "        if self.wave_banks && nr32 & 0x80 != 0 {\n", "        if false {\n"),
-    ("AGB: force gives 50 %", "            return 3;\n", "            return 2;\n"),
-    ("AGB: NR30's bank bits unreadable", "    masks[0x0A] = 0x1F;\n", "    masks[0x0A] = 0x7F;\n"),
-    ("AGB: wave digits swapped on write", "            self.wave_digits[at] = value >> 4;\n            self.wave_digits[at + 1] = value & 0xF;\n", "            self.wave_digits[at + 1] = value >> 4;\n            self.wave_digits[at] = value & 0xF;\n"),
+    # The AGB row is src/agb.rs (gb-apu-python's clean-room rewrite, 2026-11-25): a fourth field
+    # names the file under src/.
+    ("AGB: the CPU reaches the playing bank", "        (((nr30 & NR30_BANK) >> 6) ^ 1) as usize", "        ((nr30 & NR30_BANK) >> 6) as usize", "agb.rs"),
+    ("AGB: bank 0 always plays", "        let selected = ((nr30 & NR30_BANK) >> 6) as usize;", "        let selected = 0;", "agb.rs"),
+    ("AGB: 64 digits never chain", "            self.second = if nr30 & NR30_DIMENSION != 0 {\n                !self.second\n            } else {\n                false\n            };", "            self.second = false;", "agb.rs"),
+    ("AGB: the other bank starts a digit early", "if self.count == BANK_DIGITS as i64 {", "if self.count == BANK_DIGITS as i64 - 1 {", "agb.rs"),
+    ("AGB: a pointer, not a shift register", "        let digit = digits[0];\n        digits.rotate_left(1);", "        let digit = digits[self.count as usize];", "agb.rs"),
+    ("AGB: a restart keeps the bank it was on", "        self.count = 0;\n        self.second = false;\n    }", "        self.count = 0;\n    }", "agb.rs"),
+    ("AGB: force bit ignored", "    if nr32 & NR32_FORCE != 0 {\n        FORCED_QUARTERS", "    if false {\n        FORCED_QUARTERS", "agb.rs"),
+    ("AGB: force gives 50 %", "pub const FORCED_QUARTERS: i64 = 3;", "pub const FORCED_QUARTERS: i64 = 2;", "agb.rs"),
+    ("AGB: NR30's bank bits unreadable", "masks[0x0A] = 0x1F; // NR30", "masks[0x0A] = 0x7F; // NR30", "agb.rs"),
+    ("AGB: wave digits swapped on write", "        digits[2 * offset] = (value >> 4) & 0xF;\n        digits[2 * offset + 1] = value & 0xF;", "        digits[2 * offset] = value & 0xF;\n        digits[2 * offset + 1] = (value >> 4) & 0xF;", "agb.rs"),
     ("run() drops an odd T", "        self.held_t = t & 1;\n", "        self.held_t = 0;\n"),
     ("PCM nibbles swapped", "outputs[2 * pair] | (outputs[2 * pair + 1] << 4)", "(outputs[2 * pair] << 4) | outputs[2 * pair + 1]"),
 ]  # fmt: skip
@@ -75,7 +79,9 @@ def run(cmd: list[str], cwd: Path, env: dict | None = None) -> subprocess.Comple
     )
 
 
-def judge(name: str, old: str, new: str, targets: queue.Queue) -> tuple[str, list[str], str]:
+def judge(
+    name: str, old: str, new: str, targets: queue.Queue, file: str = "lib.rs"
+) -> tuple[str, list[str], str]:
     copy = ROOT / "external" / "faults" / slug(name)
     copy.mkdir(parents=True, exist_ok=True)
     for item in ("Cargo.toml", "Cargo.lock", "src", "tests", "examples"):
@@ -86,10 +92,10 @@ def judge(name: str, old: str, new: str, targets: queue.Queue) -> tuple[str, lis
             shutil.copytree(source, copy / item, dirs_exist_ok=True, copy_function=shutil.copy)
         else:
             shutil.copy(source, copy / item)
-    text = (ROOT / "src" / "lib.rs").read_text()
+    text = (ROOT / "src" / file).read_text()
     if text.count(old) != 1:
         return name, [], f"fault text found {text.count(old)} times"
-    (copy / "src" / "lib.rs").write_text(text.replace(old, new))
+    (copy / "src" / file).write_text(text.replace(old, new))
     target = targets.get()
     try:
         env = {"CARGO_TARGET_DIR": str(target)}
@@ -132,7 +138,7 @@ def main() -> int:
         targets.put(ROOT / "external" / "faults-target" / str(i))
     missed = []
     with ThreadPoolExecutor(args.jobs) as pool:
-        futures = [pool.submit(judge, name, old, new, targets) for name, old, new in faults]
+        futures = [pool.submit(judge, name, old, new, targets, *where) for name, old, new, *where in faults]
         for future in futures:
             name, caught, detail = future.result()
             rungs = "+".join(caught) if caught else "-"
